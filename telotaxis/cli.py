@@ -113,7 +113,11 @@ def cmd_live(args) -> None:
             composer.speed = min(8.0, composer.speed * 1.25)
 
     def tick() -> None:
-        if not root.winfo_exists():
+        try:
+            alive = root.winfo_exists()
+        except tk.TclError:
+            return
+        if not alive:
             return
         now = time.perf_counter()
         dt = min(0.05, now - state["last"])
