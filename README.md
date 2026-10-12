@@ -1,10 +1,10 @@
 # Telotaxis
 
-The released male fruit-fly central nervous system, closed loop, steering cars toward what it sees.
+The released male fruit-fly central nervous system, closed loop, steering a Unitree G1 around a lap.
 
-Telotaxis is the ethology term for directed movement toward a localized stimulus. Twelve cars share one connectivity and keep twelve independent neural states. Nothing in the arena is scripted. Food is a red, orange, or yellow sphere. Pillars and slabs are obstacles. The only motor command is two numbers: the left posterior descending pool and the right one.
+Telotaxis is the ethology term for directed movement toward a localized stimulus. One humanoid, one connectivity, its own neural state. A red gate is the only thing the eyes are given. When the runner reaches it, the gate moves to the next mark on the oval. The only motor command is two numbers: the left posterior descending pool and the right one.
 
-![Twelve cars, one MaleCNS pathway](docs/media/telotaxis.gif)
+![Unitree G1 on the lap](docs/media/g1.gif)
 
 ## What is actually in the pathway
 
@@ -37,21 +37,22 @@ Each 15 ms:
 
 Cars stand still for 1.5 s. After that, a pool mean of 8 Hz held for 150 ms latches forward drive. There is no stop state. A car blocked by a sphere keeps being told to go forward. Cars do not collide with each other. They do collide with the floor, the food, and the pillars.
 
-The differential drive and the onset timer are engineering. The synapses are not.
+On the Unitree G1 the two numbers become a walking speed and a yaw rate. The step pattern, the torso balance servo, and the onset timer are engineering. The synapses are not. A car body is still there (`--body car`) for the earlier swarm.
 
 ## Run
 
 ```bash
 pip install -r requirements.txt
-python3 -m telotaxis live          # window. space pause, V vision, R reset, C pin, arrows orbit
-python3 -m telotaxis run           # 12 cars, 12 s, then the stimulus-absent control
-python3 -m telotaxis frame --at 4  # one still
-python3 -m telotaxis record        # docs/media/telotaxis.mp4
+python3 -m telotaxis live          # Unitree G1. space pause, V vision, R reset, arrows orbit
+python3 -m telotaxis record        # docs/media/g1.mp4
+python3 -m telotaxis live --body car --cars 12
 ```
 
-`--cars` is 1 to 24, `--body robot` swaps the mesh, `--variant absent` keeps the objects and pins the encoder at baseline. On macOS the viewer sets `MUJOCO_GL=cgl`.
+`--body` is `g1`, `car`, or `robot`. `--variant absent` keeps the gate and pins the encoder at baseline, so the humanoid does not start. On macOS the viewer sets `MUJOCO_GL=cgl`.
 
-Twelve cars, seed 1, 6 s, on an Apple M2 Max: all 12 locomoting, all 12 closer to food (median closure +1.40 m), 8 of 12 ended against an object, displacement 0.86–1.78 m. The same scene with the stimulus removed does not move. The recording is `docs/media/telotaxis.mp4`.
+A 10 s run, seed 1: the G1 starts walking after the 1.5 s onset, passes 2 gates, and is still upright at the end. With the stimulus removed it stays standing. The recording is `docs/media/g1.mp4`.
+
+The G1 mesh is the [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) Unitree G1, BSD-3-Clause. See `assets/unitree_g1/LICENSE`.
 
 ## Rebuild the pathway
 

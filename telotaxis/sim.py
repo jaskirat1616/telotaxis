@@ -50,6 +50,7 @@ class Summary:
     displacement_m: tuple[float, float]
     neurons: int
     synapses: int
+    gates: int = -1
 
 
 class Swarm:
@@ -179,4 +180,5 @@ class Swarm:
             displacement_m=(float(displacement.min()), float(displacement.max())),
             neurons=int(self.pathway.meta["neurons"]),
             synapses=int(self.pathway.meta["synapses"]),
+            gates=int(self.world.gates_passed) if self.body == "g1" else -1,
         )

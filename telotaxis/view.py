@@ -48,6 +48,8 @@ class Composer:
         self.speed = 1.0
         self.paused = False
         self.focus_pin: int | None = None
+        self.orbit = 148.0
+        self.elevation = -16.0
         self._renderer = None
         self._font_title = _font(22, bold=True)
         self._font_sub = _font(15)
@@ -70,6 +72,12 @@ class Composer:
 
     def frame(self) -> np.ndarray:
         focus = self.focus()
+        if self.swarm.body == "g1":
+            pose = self.swarm.world.poses()[0]
+            self.cam.lookat[:] = [pose[0], pose[1], 0.9]
+            self.cam.distance = 5.2
+            self.cam.azimuth = float(np.degrees(pose[2]) + self.orbit)
+            self.cam.elevation = self.elevation
         self.swarm.world.mark_focus(focus)
         arena = self._arena()
         brain = self._brain(focus)
@@ -97,11 +105,15 @@ class Composer:
         return np.ascontiguousarray(renderer.render())
 
     def _title(self, draw) -> None:
-        noun = "cars" if self.swarm.body == "car" else "robots"
-        title = f"One connectome. Twelve {noun}. Nothing scripted." if self.swarm.n == 12 else (
-            f"One connectome. {self.swarm.n} {noun}. Nothing scripted."
-        )
-        draw.text((22, 18), title, font=self._font_title, fill=(28, 30, 34))
+        if self.swarm.body == "g1":
+            title = "One connectome. One Unitree G1."
+        else:
+            noun = "cars" if self.swarm.body == "car" else "robots"
+            title = f"One connectome. Twelve {noun}. Nothing scripted." if self.swarm.n == 12 else (
+                f"One connectome. {self.swarm.n} {noun}. Nothing scripted."
+            )
+        fill = (236, 232, 220) if self.swarm.body == "g1" else (28, 30, 34)
+        draw.text((22, 18), title, font=self._font_title, fill=fill)
 
     def _brain(self, focus: int) -> np.ndarray:
         image = Image.new("RGB", (BRAIN_W, ARENA_H), (0, 0, 0))
@@ -117,7 +129,7 @@ class Composer:
         image.paste(Image.fromarray(dorsal), (0, header))
         image.paste(Image.fromarray(lateral), (0, header + view_h + gap))
         draw = ImageDraw.Draw(image)
-        name = "CAR" if self.swarm.body == "car" else "ROBOT"
+        name = "G1" if self.swarm.body == "g1" else ("CAR" if self.swarm.body == "car" else "ROBOT")
         meta = self.swarm.pathway.meta
         draw.text((16, 12), f"{name}-{focus + 1:02d}  ·  MaleCNS v1.0", font=self._font_sub, fill=INK)
         draw.text(
@@ -148,13 +160,20 @@ class Composer:
     def _description(self, draw) -> None:
         y = ARENA_H
         draw.rectangle((0, y, WIDTH, y + DESC_H), fill=BG)
-        noun = "cars" if self.swarm.body == "car" else "robots"
-        text = (
-            f"Twelve {noun}, one MaleCNS pathway. Lamina hexes see bearing and angular size. "
-            "Only the two DNp pools steer."
-            if self.swarm.n == 12
-            else f"{self.swarm.n} {noun}, one MaleCNS pathway. Only the two DNp pools steer."
-        )
+        if self.swarm.body == "g1":
+            passed = getattr(self.swarm.world, "gates_passed", 0)
+            text = (
+                f"Unitree G1 on a lap. The connectome sees the next gate. Gates passed {passed}. "
+                "Only the two DNp pools steer."
+            )
+        else:
+            noun = "cars" if self.swarm.body == "car" else "robots"
+            text = (
+                f"Twelve {noun}, one MaleCNS pathway. Lamina hexes see bearing and angular size. "
+                "Only the two DNp pools steer."
+                if self.swarm.n == 12
+                else f"{self.swarm.n} {noun}, one MaleCNS pathway. Only the two DNp pools steer."
+            )
         draw.text((18, y + 8), text, font=self._font_small, fill=INK)
 
     def _charts(self, draw, focus: int) -> None:
@@ -181,13 +200,15 @@ class Composer:
                 color = (210, 206, 198) if index == focus else (88, 86, 82)
                 series.append((speed[:, index], color))
         _chart(draw, right_box, times, series, 0.8, None)
-        name = "car" if self.swarm.body == "car" else "robot"
-        draw.text((left_box[0], top + 6), f"DNp readout, {name}-{focus + 1:02d}", font=self._font_small, fill=MUTED)
+        name = "G1" if self.swarm.body == "g1" else ("car" if self.swarm.body == "car" else "robot")
+        draw.text((left_box[0], top + 6), f"DNp readout, {name}", font=self._font_small, fill=MUTED)
         if has:
             draw.text((left_box[0] + 230, top + 8), f"left {focus_l[-1]:.1f} Hz", font=self._font_tiny, fill=TRACE_L)
             draw.text((left_box[0] + 360, top + 8), f"right {focus_r[-1]:.1f} Hz", font=self._font_tiny, fill=TRACE_R)
-        draw.text((right_box[0], top + 6), f"forward drive, all {name}s", font=self._font_small, fill=MUTED)
-        draw.text((right_box[2] - 148, top + 8), "one line per vehicle", font=self._font_micro, fill=DIM)
+        drive_label = "forward drive" if self.swarm.n == 1 else f"forward drive, all {name}s"
+        draw.text((right_box[0], top + 6), drive_label, font=self._font_small, fill=MUTED)
+        if self.swarm.n > 1:
+            draw.text((right_box[2] - 148, top + 8), "one line per vehicle", font=self._font_micro, fill=DIM)
 
     def _footer(self, draw) -> None:
         y = ARENA_H + DESC_H + CHART_H
@@ -203,7 +224,12 @@ class Composer:
             "MaleCNS v1.0 synapses, weight at least 3, optic lobe through visual projection to descending neurons. "
             "Unresolved transmitters dropped. Photoreceptors omitted. "
             f"Onset is a timer: still for {ONSET_STAND_S:.1f} s, then 150 ms above threshold. "
-            "Wheels are engineering. Central brain and the ventral cord are not in this pathway.",
+            + (
+                "The gait and the balance servo are engineering. "
+                if self.swarm.body == "g1"
+                else "Wheels are engineering. "
+            )
+            + "Central brain and the ventral cord are not in this pathway.",
             font=self._font_micro,
             fill=DIM,
         )

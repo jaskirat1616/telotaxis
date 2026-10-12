@@ -4,6 +4,8 @@ __pycache__/
 .venv/
 data/raw/
 docs/media/*.mp4
+!docs/media/g1.mp4
+MUJOCO_LOG.TXT
 
 # local symlink to the 1 GB MaleCNS tables
 data/raw

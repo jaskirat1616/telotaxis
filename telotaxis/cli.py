@@ -11,7 +11,8 @@ from telotaxis.view import Composer
 
 
 def build(args) -> Swarm:
-    return Swarm(n=args.cars, seed=args.seed, body=args.body, stimulus=args.variant != "absent")
+    cars = 1 if args.body == "g1" else args.cars
+    return Swarm(n=cars, seed=args.seed, body=args.body, stimulus=args.variant != "absent")
 
 
 def _print_summary(summary) -> None:
@@ -22,6 +23,7 @@ def _print_summary(summary) -> None:
         f"nearer food {summary.nearer_food:2}/{summary.n}   "
         f"median food closure {summary.median_food_delta_m:+.2f} m   "
         f"displacement {summary.displacement_m[0]:.2f}–{summary.displacement_m[1]:.2f} m"
+        + (f"   gates {summary.gates}" if summary.gates >= 0 else "")
     )
 
 
@@ -70,89 +72,77 @@ def cmd_record(args) -> None:
 
 
 def cmd_live(args) -> None:
-    import glfw
-    from OpenGL.GL import (
-        GL_LINEAR, GL_QUADS, GL_RGB, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
-        GL_TEXTURE_MIN_FILTER, GL_UNSIGNED_BYTE, glBegin, glBindTexture, glEnable,
-        glEnd, glGenTextures, glTexCoord2f, glTexImage2D, glTexParameteri, glVertex2f, glViewport,
-    )
+    # Tk keeps the picture on screen. MuJoCo's offscreen context was closing
+    # the GLFW window after the first frame.
+    import tkinter as tk
+    from PIL import Image, ImageTk
 
     swarm = build(args)
     composer = Composer(swarm)
-    if not glfw.init():
-        raise RuntimeError("GLFW failed to start")
-    glfw.window_hint(glfw.SCALE_TO_MONITOR, glfw.TRUE)
-    window = glfw.create_window(1280, 720, "Telotaxis · MaleCNS", None, None)
-    if window is None:
-        glfw.terminate()
-        raise RuntimeError("GLFW window failed to open")
-    glfw.make_context_current(window)
-    texture = glGenTextures(1)
-    state = {"acc": 0.0, "last": time.perf_counter()}
+    root = tk.Tk()
+    root.title("Telotaxis · Unitree G1" if args.body == "g1" else "Telotaxis · MaleCNS")
+    root.configure(bg="black")
+    label = tk.Label(root, bg="black", borderwidth=0)
+    label.pack()
+    state = {"photo": None, "acc": 0.0, "last": time.perf_counter()}
 
-    def on_key(win, key, _scancode, action, _mods):
-        if action not in (glfw.PRESS, glfw.REPEAT):
-            return
-        if key == glfw.KEY_ESCAPE:
-            glfw.set_window_should_close(win, True)
-        elif key == glfw.KEY_SPACE and action == glfw.PRESS:
+    def on_key(event) -> None:
+        key = event.keysym
+        if key == "Escape":
+            root.destroy()
+        elif key == "space":
             composer.paused = not composer.paused
-        elif key == glfw.KEY_V and action == glfw.PRESS:
+        elif key in ("v", "V"):
             swarm.stimulus = not swarm.stimulus
-        elif key == glfw.KEY_R and action == glfw.PRESS:
+        elif key in ("r", "R"):
             swarm.reset(stimulus=swarm.stimulus)
-        elif key == glfw.KEY_C and action == glfw.PRESS:
+        elif key in ("c", "C"):
             composer.focus_pin = None if composer.focus_pin is not None else composer.focus()
-        elif key == glfw.KEY_LEFT:
-            composer.cam.azimuth -= 4.0
-        elif key == glfw.KEY_RIGHT:
-            composer.cam.azimuth += 4.0
-        elif key == glfw.KEY_UP:
-            composer.cam.elevation = min(-8.0, composer.cam.elevation + 3.0)
-        elif key == glfw.KEY_DOWN:
-            composer.cam.elevation = max(-80.0, composer.cam.elevation - 3.0)
-        elif key in (glfw.KEY_MINUS, glfw.KEY_KP_SUBTRACT):
+        elif key == "Left":
+            composer.orbit -= 4.0
+        elif key == "Right":
+            composer.orbit += 4.0
+        elif key == "Up":
+            composer.elevation = min(-8.0, composer.elevation + 3.0)
+        elif key == "Down":
+            composer.elevation = max(-80.0, composer.elevation - 3.0)
+        elif key in ("minus", "KP_Subtract"):
             composer.speed = max(0.25, composer.speed / 1.25)
-        elif key in (glfw.KEY_EQUAL, glfw.KEY_KP_ADD):
+        elif key in ("equal", "plus", "KP_Add"):
             composer.speed = min(8.0, composer.speed * 1.25)
 
-    glfw.set_key_callback(window, on_key)
-    print("Telotaxis live. Space pauses, V toggles vision, R resets, C pins the brain, arrows orbit, esc quits.")
+    def tick() -> None:
+        if not root.winfo_exists():
+            return
+        now = time.perf_counter()
+        dt = min(0.05, now - state["last"])
+        state["last"] = now
+        if not composer.paused:
+            state["acc"] += dt * composer.speed
+            stepped = 0
+            while state["acc"] >= 0.015 and stepped < 2:
+                swarm.step_interval()
+                state["acc"] -= 0.015
+                stepped += 1
+        rgb = composer.frame()
+        image = Image.fromarray(rgb)
+        state["photo"] = ImageTk.PhotoImage(image)
+        label.configure(image=state["photo"])
+        root.after(1, tick)
+
+    root.bind("<Key>", on_key)
+    print("Telotaxis live. Space pauses, V toggles vision, R resets, C pins the brain, arrows orbit, esc quits.", flush=True)
     try:
-        while not glfw.window_should_close(window):
-            now = time.perf_counter()
-            dt = min(0.05, now - state["last"])
-            state["last"] = now
-            if not composer.paused:
-                state["acc"] += dt * composer.speed
-                stepped = 0
-                while state["acc"] >= 0.015 and stepped < 2:
-                    swarm.step_interval()
-                    state["acc"] -= 0.015
-                    stepped += 1
-            rgb = composer.frame()
-            height, width, _ = rgb.shape
-            glBindTexture(GL_TEXTURE_2D, texture)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, rgb)
-            fbw, fbh = glfw.get_framebuffer_size(window)
-            glViewport(0, 0, fbw, fbh)
-            glEnable(GL_TEXTURE_2D)
-            glBegin(GL_QUADS)
-            glTexCoord2f(0.0, 1.0); glVertex2f(-1.0, -1.0)
-            glTexCoord2f(1.0, 1.0); glVertex2f(1.0, -1.0)
-            glTexCoord2f(1.0, 0.0); glVertex2f(1.0, 1.0)
-            glTexCoord2f(0.0, 0.0); glVertex2f(-1.0, 1.0)
-            glEnd()
-            glfw.swap_buffers(window)
-            glfw.poll_events()
+        root.after(1, tick)
+        root.mainloop()
     except KeyboardInterrupt:
         pass
     finally:
         composer.close()
-        glfw.destroy_window(window)
-        glfw.terminate()
+        try:
+            root.destroy()
+        except tk.TclError:
+            pass
 
 
 def _save(path: str, frames: list, fps: int) -> None:
@@ -176,7 +166,7 @@ def main(argv: list[str] | None = None) -> None:
     def common(command):
         command.add_argument("--cars", type=int, default=12)
         command.add_argument("--seed", type=int, default=1)
-        command.add_argument("--body", choices=("car", "robot"), default="car")
+        command.add_argument("--body", choices=("g1", "car", "robot"), default="g1")
         command.add_argument("--variant", choices=("exact", "absent", "both"), default="exact")
 
     live = sub.add_parser("live")

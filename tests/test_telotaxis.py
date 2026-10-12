@@ -61,6 +61,20 @@ class WorldTests(unittest.TestCase):
             self.assertGreater(along, 0.2)
         self.assertEqual(world.agent_agent_contacts(), 0)
 
+    def test_g1_walks_and_stays_up(self):
+        from telotaxis.world import World
+
+        world = World(1, "g1", seed=1)
+        start = world.poses()[0].copy()
+        for _ in range(200):
+            world.set_drive(np.array([0.42]), np.zeros(1))
+            world.step(15)
+        pose = world.poses()[0]
+        travelled = math.hypot(pose[0] - start[0], pose[1] - start[1])
+        self.assertGreater(travelled, 0.8)
+        self.assertGreater(float(world.upright()[0]), 0.9)
+        self.assertGreater(float(world.data.qpos[2]), 0.6)
+
 
 if __name__ == "__main__":
     unittest.main()

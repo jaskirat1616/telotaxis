@@ -242,11 +242,14 @@ class World:
         import mujoco
 
         self.mujoco = mujoco
-        self.n = n
+        self.n = 1 if body == "g1" else n
         self.body = body
-        self.arena = list(arena) if arena is not None else default_arena()
         self.rng = np.random.default_rng(seed)
-        self.spawns = spawn_ring(n, self.rng, self.arena)
+        if body == "g1":
+            self._init_g1()
+            return
+        self.arena = list(arena) if arena is not None else default_arena()
+        self.spawns = spawn_ring(self.n, self.rng, self.arena)
         xml, self.arena = build_spec(n, body, self.spawns, self.arena)
         self.model = mujoco.MjModel.from_xml_string(xml)
         self.data = mujoco.MjData(self.model)
@@ -289,7 +292,72 @@ class World:
         )
         self.agent_geom_set = set(int(gid) for gid in self.agent_geoms)
 
+    def _init_g1(self) -> None:
+        from telotaxis.gait import Gait
+        from telotaxis.track import BEACON_RADIUS_M, build, gates
+
+        self.beacon_radius = BEACON_RADIUS_M
+        self.model = build(self.mujoco)
+        self.data = self.mujoco.MjData(self.model)
+        self.gait = Gait(self.model, self.mujoco)
+        self.pelvis = self.mujoco.mj_name2id(self.model, self.mujoco.mjtObj.mjOBJ_BODY, "pelvis")
+        self.lap = gates()
+        self.gate_index = 1
+        self.gates_passed = 0
+        self.cmd_speed = 0.0
+        self.cmd_yaw = 0.0
+        self.key_id = self.mujoco.mj_name2id(self.model, self.mujoco.mjtObj.mjOBJ_KEY, "knees_bent")
+        self.free_adr = np.array([int(self.gait.pelvis_adr)], dtype=np.int32)
+        self.nose_geom = np.zeros(1, dtype=np.int32)
+        self._nose_rgba = np.ones((1, 4))
+        self.agent_geom_set = set()
+        self._place_g1()
+
+    def _beacon_object(self) -> ArenaObject:
+        x, y = self.lap[self.gate_index]
+        return ArenaObject("gate", "food", x, y, self.beacon_radius, (0.93, 0.24, 0.14, 1))
+
+    def _place_g1(self) -> None:
+        from telotaxis.track import heading
+
+        self.mujoco.mj_resetDataKeyframe(self.model, self.data, self.key_id)
+        self.gait.reset()
+        self.gate_index = 1
+        self.gates_passed = 0
+        self.cmd_speed = 0.0
+        self.cmd_yaw = 0.0
+        start = self.lap[0]
+        yaw = heading(start, self.lap[1])
+        half = 0.5 * yaw
+        self.data.qpos[0:7] = (
+            start[0],
+            start[1],
+            0.755,
+            math.cos(half),
+            0.0,
+            0.0,
+            math.sin(half),
+        )
+        self.data.mocap_pos[0] = (self.lap[1][0], self.lap[1][1], 1.05)
+        self.arena = [self._beacon_object()]
+        self.mujoco.mj_forward(self.model, self.data)
+
+    def _advance_gate(self) -> None:
+        x, y = float(self.data.qpos[0]), float(self.data.qpos[1])
+        bx, by = self.lap[self.gate_index]
+        if math.hypot(x - bx, y - by) > 0.95:
+            return
+        self.gate_index = (self.gate_index + 1) % len(self.lap)
+        self.gates_passed += 1
+        bx, by = self.lap[self.gate_index]
+        self.data.mocap_pos[0] = (bx, by, 1.05)
+        self.arena = [self._beacon_object()]
+
     def reset(self, seed: int) -> None:
+        if self.body == "g1":
+            self.rng = np.random.default_rng(seed)
+            self._place_g1()
+            return
         self.mujoco.mj_resetData(self.model, self.data)
         self.rng = np.random.default_rng(seed)
         self.spawns = spawn_ring(self.n, self.rng, self.arena)
@@ -337,6 +405,10 @@ class World:
         return out
 
     def set_drive(self, speed: np.ndarray, yaw_rate: np.ndarray) -> None:
+        if self.body == "g1":
+            self.cmd_speed = float(speed[0])
+            self.cmd_yaw = float(yaw_rate[0])
+            return
         left = (speed - yaw_rate * HALF_TRACK_M) / WHEEL_RADIUS_M
         right = (speed + yaw_rate * HALF_TRACK_M) / WHEEL_RADIUS_M
         for index in range(self.n):
@@ -345,6 +417,13 @@ class World:
 
     def step(self, n_steps: int) -> None:
         mujoco = self.mujoco
+        if self.body == "g1":
+            dt = float(self.model.opt.timestep)
+            count = max(1, int(round(n_steps * PHYSICS_DT / dt)))
+            for _ in range(count):
+                self.gait.step(self.model, self.data, self.cmd_speed, self.cmd_yaw, dt, int(self.pelvis))
+                self._advance_gate()
+            return
         for _ in range(n_steps):
             mujoco.mj_step(self.model, self.data)
 
@@ -363,6 +442,8 @@ class World:
         return count
 
     def mark_focus(self, index: int | None) -> None:
+        if self.body == "g1":
+            return
         self.model.geom_rgba[self.nose_geom] = self._nose_rgba
         if index is None:
             return
