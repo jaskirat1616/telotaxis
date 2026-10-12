@@ -62,8 +62,6 @@ The public tables are about 1 GB and are not in this repo. Put these three files
 - `body-neurotransmitters-male-cns-v1.0.feather`
 - `connectome-weights-male-cns-v1.0-minconf-0.5.feather`
 
-Source: <https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/>
-
 `data/pathway.npz` in the repo is that build. Its licence is CC-BY-4.0, not MIT. See NOTICE.
 
 ## Credit
