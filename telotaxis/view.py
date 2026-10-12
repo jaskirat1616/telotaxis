@@ -51,6 +51,10 @@ class Composer:
         self.orbit = 148.0
         self.elevation = -16.0
         self._renderer = None
+        self._plate = None
+        self._brain_im = None
+        self._live_i = 0
+        self._desc_key = None
         self._font_title = _font(22, bold=True)
         self._font_sub = _font(15)
         self._font_small = _font(13)
@@ -90,6 +94,46 @@ class Composer:
         self._charts(draw, focus)
         self._footer(draw)
         return np.asarray(canvas)
+
+    def frame_live(self) -> np.ndarray:
+        """Same picture as frame(), with the brain redrawn a few times a second.
+
+        The arena is the part that has to track the body. Rebuilding the whole
+        1600x900 plate and the soma cloud on every tick was the lag.
+        """
+
+        focus = self.focus()
+        if self.swarm.body == "g1":
+            pose = self.swarm.world.poses()[0]
+            self.cam.lookat[:] = [pose[0], pose[1], 0.9]
+            self.cam.distance = 5.2
+            self.cam.azimuth = float(np.degrees(pose[2]) + self.orbit)
+            self.cam.elevation = self.elevation
+        self.swarm.world.mark_focus(focus)
+        if self._plate is None:
+            self._plate = Image.new("RGB", (WIDTH, HEIGHT), BG)
+        arena = self._arena()
+        self._plate.paste(Image.fromarray(arena), (0, 0))
+        if self._brain_im is None or self._live_i % 3 == 0:
+            self._brain_im = Image.fromarray(self._brain(focus))
+        self._plate.paste(self._brain_im, (ARENA_W, 0))
+        draw = ImageDraw.Draw(self._plate)
+        # The arena paste wipes the title. The footer never changes, and the
+        # description only changes when a gate is passed, so those stay put.
+        self._title(draw)
+        if self.swarm.body == "g1":
+            desc_key = ("g1", int(getattr(self.swarm.world, "gates_passed", 0)))
+        else:
+            desc_key = (self.swarm.body, self.swarm.n)
+        if desc_key != self._desc_key:
+            self._description(draw)
+            self._footer(draw)
+            self._desc_key = desc_key
+        self._charts(draw, focus)
+        self._live_i += 1
+        # Half resolution for the window. The full plate is what made each
+        # Tk blit the slow part of the tick.
+        return np.ascontiguousarray(np.asarray(self._plate)[::2, ::2])
 
     def _renderer_for(self):
         if self._renderer is None:
@@ -215,17 +259,16 @@ class Composer:
         draw.rectangle((0, y, WIDTH, HEIGHT), fill=BG)
         draw.text(
             (16, y + 4),
-            "space pause     V vision     R reset     C pin this brain     arrows orbit     - / = speed     esc quit",
+            "Live window: space pause, V vision, R reset, arrows orbit, esc quits.",
             font=self._font_tiny,
             fill=MUTED,
         )
         draw.text(
             (16, y + 24),
-            "MaleCNS v1.0 synapses, weight at least 3, optic lobe through visual projection to descending neurons. "
-            "Unresolved transmitters dropped. Photoreceptors omitted. "
-            f"Onset is a timer: still for {ONSET_STAND_S:.1f} s, then 150 ms above threshold. "
+            "MaleCNS v1.0, weight at least 3, optic lobe to descending neurons. "
+            f"Onset timer: still {ONSET_STAND_S:.1f} s, then 150 ms above threshold. "
             + (
-                "The gait and the balance servo are engineering. "
+                "Gait and pelvis wrench are engineering. MuJoCo integrates the contacts. "
                 if self.swarm.body == "g1"
                 else "Wheels are engineering. "
             )
@@ -285,8 +328,9 @@ def _chart(draw, box, times, series, y_max, threshold) -> None:
 
     for values, color in series:
         pts = xy(np.asarray(values, dtype=np.float64)[window])
-        if len(pts) > width:
-            pts = pts[np.linspace(0, len(pts) - 1, width).astype(int)]
+        budget = min(width, 160)
+        if len(pts) > budget:
+            pts = pts[np.linspace(0, len(pts) - 1, budget).astype(int)]
         flat = [tuple(p) for p in pts]
         if len(flat) >= 2:
             draw.line(flat, fill=color, width=1)

@@ -95,6 +95,10 @@ def build(mujoco):
     model = spec.compile()
     model.vis.global_.offwidth = 1400
     model.vis.global_.offheight = 800
+    # The Menagerie MJX scene ships a cheap solver budget. Contacts and the
+    # free joint need a few more iterations before the foot wrenches settle.
+    model.opt.iterations = 12
+    model.opt.ls_iterations = 12
     model.actuator_gainprm[:, 0] *= 5.0
     model.actuator_biasprm[:, 1] *= 5.0
     model.actuator_biasprm[:, 2] *= 4.0

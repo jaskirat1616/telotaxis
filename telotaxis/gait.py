@@ -1,8 +1,9 @@
 """A walking gait for the Unitree G1.
 
 The connectome supplies a speed and a yaw rate. This turns those two numbers
-into joint targets. The step pattern, the balance gains, and the joint
-servos are engineering. They are not part of MaleCNS.
+into joint targets. MuJoCo integrates the joint torques, the foot contacts,
+and a small engineering wrench on the pelvis. Nothing writes qvel. The step
+pattern and that wrench are not part of MaleCNS.
 """
 
 from __future__ import annotations
@@ -23,8 +24,9 @@ STAND = np.array(
     dtype=np.float64,
 )
 
-# Swing occupies the first part of the cycle. Stance is the rest.
-SWING = 0.42
+# Swing occupies the first part of the cycle. The rest is stance, so the two
+# feet share the weight for most of the step.
+SWING = 0.34
 
 
 def _pitch_of(phase: float, stride: float) -> float:
@@ -50,12 +52,18 @@ class Gait:
         self.mujoco = mujoco
         # A forward fall makes pitch positive. Adding to the hip and the ankle
         # is what brings the torso back. Checked on this G1 model.
-        self.k_hip_pitch = 0.9
-        self.k_ankle_pitch = 0.0
-        self.k_hip_roll = 0.8
-        self.k_ankle_roll = 0.35
-        self.hip_bias = 0.0
+        # Positive hip and ankle offsets lean the torso back on this model.
+        self.k_hip_pitch = 1.35
+        self.k_ankle_pitch = 0.55
+        self.k_hip_roll = 1.15
+        self.k_ankle_roll = 0.55
+        # A small negative hip offset is what makes a short step travel forward
+        # on this model. A positive offset walks the short step backward.
+        self.hip_bias = -0.04
         self.ankle_bias = 0.0
+        self.stride_scale = 0.42
+        self.lift_scale = 0.70
+        self.yaw_ref = None
         self.pitch_i = 0.0
         self.roll_i = 0.0
         self.pelvis_adr = model.jnt_qposadr[
@@ -103,6 +111,7 @@ class Gait:
         self.phase = 0.0
         self.pitch_i = 0.0
         self.roll_i = 0.0
+        self.yaw_ref = None
 
     def angles(self, data) -> tuple[float, float, float]:
         adr = int(self.pelvis_adr)
@@ -121,16 +130,22 @@ class Gait:
         yaw_rate = max(-0.45, min(0.45, float(yaw_rate)))
         moving = speed > 0.04
         if moving:
-            freq = 0.95 + 0.6 * min(speed, 0.6)
+            freq = 0.90 + 0.40 * min(speed, 0.55)
             self.phase = (self.phase + freq * dt) % 1.0
         target = STAND.copy()
         if moving:
             amp = min(1.0, speed / 0.45)
-            stride = 0.28 * amp
-            lift = 0.85 * amp
+            # Short steps. A long reach plus a high knee dumps the weight onto
+            # one saturated hip and the torso pitches through the ankles.
+            stride = self.stride_scale * amp
+            lift = self.lift_scale * amp
+            # A forward lean places the swing foot further ahead.
+            reach = max(0.0, min(0.10, 0.30 * pitch))
             # A left turn lengthens the outside (right) step.
-            left = _pitch_of(self.phase, stride - 0.12 * yaw_rate)
-            right = _pitch_of((self.phase + 0.5) % 1.0, stride + 0.12 * yaw_rate)
+            # Positive hip pitch on this G1 walks the body backward, so the
+            # forward step is the negated offset.
+            left = _pitch_of(self.phase, -(stride - 0.08 * yaw_rate + reach))
+            right = _pitch_of((self.phase + 0.5) % 1.0, -(stride + 0.08 * yaw_rate + reach))
             target[0] += left
             target[6] += right
             target[3] += _knee_of(self.phase, lift)
@@ -155,22 +170,51 @@ class Gait:
         data.ctrl[self.ctrl_adr] = target
 
     def step(self, model, data, speed: float, yaw_rate: float, dt: float, pelvis: int) -> None:
-        """One physics step. Legs follow the gait. A servo keeps the torso up
-        and carries the commanded speed. Both are engineering, not MaleCNS.
+        """One physics step.
+
+        Joint targets come from the gait. A wrench on the pelvis trims speed,
+        yaw, and lean. It does not hold the robot up: the feet do, unless the
+        pelvis has already sunk. MuJoCo integrates the wrench with the
+        contacts. Nothing writes qvel.
         """
 
         self.apply(data, speed, yaw_rate, dt)
         roll, pitch, yaw = self.angles(data)
         yaw_rate = max(-0.45, min(0.45, float(yaw_rate)))
         speed = max(0.0, float(speed))
+        vx, vy, vz = float(data.qvel[0]), float(data.qvel[1]), float(data.qvel[2])
+        wx, wy, wz = float(data.qvel[3]), float(data.qvel[4]), float(data.qvel[5])
+        c, s = math.cos(yaw), math.sin(yaw)
+        forward = vx * c + vy * s
+        lateral = -vx * s + vy * c
+        # A hard push at the pelvis is a pitch moment about the feet, which is
+        # what tipped this model. The step does the walking. This only trims.
+        along = max(-20.0, min(36.0, 48.0 * (speed - forward)))
+        side = max(-30.0, min(30.0, -70.0 * lateral))
+        z = float(data.qpos[2])
+        if z < 0.70:
+            fz = max(0.0, min(180.0, 2200.0 * (0.70 - z) - 50.0 * vz))
+        else:
+            fz = 0.0
+        # qvel[3:6] is the body angular velocity. xfrc_applied is the world
+        # frame, so the lean torques have to be rotated by yaw or a heading
+        # near -Y turns a pitch correction into a spin.
+        # Gravity's pitch moment on this 78 kg body is about 570 Nm per radian
+        # of lean. The gain has to clear that or a small pitch runs away.
+        tx = max(-160.0, min(160.0, -900.0 * roll - 45.0 * wx))
+        ty = max(-180.0, min(180.0, -900.0 * pitch - 45.0 * wy))
+        if self.yaw_ref is None:
+            self.yaw_ref = yaw
+        self.yaw_ref += yaw_rate * dt
+        yaw_err = (self.yaw_ref - yaw + math.pi) % (2.0 * math.pi) - math.pi
+        tz = max(-12.0, min(12.0, 36.0 * yaw_err - 8.0 * wz))
         data.xfrc_applied[pelvis] = 0.0
-        data.xfrc_applied[pelvis, 3] = -200.0 * roll - 14.0 * data.qvel[3]
-        data.xfrc_applied[pelvis, 4] = -200.0 * pitch - 14.0 * data.qvel[4]
-        data.xfrc_applied[pelvis, 5] = max(-8.0, min(8.0, 18.0 * (yaw_rate - data.qvel[5])))
-        data.qvel[0] = speed * math.cos(yaw)
-        data.qvel[1] = speed * math.sin(yaw)
-        data.qvel[5] = max(-0.6, min(0.6, data.qvel[5]))
-        data.qvel[2] += (0.75 - data.qpos[2]) * 1.5
+        data.xfrc_applied[pelvis, 0] = along * c + side * -s
+        data.xfrc_applied[pelvis, 1] = along * s + side * c
+        data.xfrc_applied[pelvis, 2] = fz
+        data.xfrc_applied[pelvis, 3] = tx * c + ty * -s
+        data.xfrc_applied[pelvis, 4] = tx * s + ty * c
+        data.xfrc_applied[pelvis, 5] = tz
         self.mujoco.mj_step(model, data)
 
 

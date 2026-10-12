@@ -37,20 +37,20 @@ Each 15 ms:
 
 Cars stand still for 1.5 s. After that, a pool mean of 8 Hz held for 150 ms latches forward drive. There is no stop state. A car blocked by a sphere keeps being told to go forward. Cars do not collide with each other. They do collide with the floor, the food, and the pillars.
 
-On the Unitree G1 the two numbers become a walking speed and a yaw rate. The step pattern, the torso balance servo, and the onset timer are engineering. The synapses are not. A car body is still there (`--body car`) for the earlier swarm.
+On the Unitree G1 the two numbers become a walking speed and a yaw rate. MuJoCo integrates the joint torques and the foot contacts. A small wrench on the pelvis trims lean and heading. Nothing in the gait writes a joint velocity. The step pattern, that wrench, and the onset timer are engineering. The synapses are not. A car body is still there (`--body car`) for the earlier swarm.
 
 ## Run
 
 ```bash
 pip install -r requirements.txt
 python3 -m telotaxis live          # Unitree G1. space pause, V vision, R reset, arrows orbit
-python3 -m telotaxis record        # docs/media/g1.mp4
+python3 -m telotaxis record --seconds 10 --fps 6 --out docs/media/g1.mp4
 python3 -m telotaxis live --body car --cars 12
 ```
 
-`--body` is `g1`, `car`, or `robot`. `--variant absent` keeps the gate and pins the encoder at baseline, so the humanoid does not start. On macOS the viewer sets `MUJOCO_GL=cgl`.
+`--body` is `g1`, `car`, or `robot`. `--variant absent` keeps the gate and pins the encoder at baseline, so the humanoid does not start. The live window renders the MuJoCo scene each tick and refreshes the soma cloud a few times a second, which is what keeps the picture moving. Recording still renders a full frame offscreen.
 
-A 10 s run, seed 1: the G1 starts walking after the 1.5 s onset, passes 2 gates, and is still upright at the end. With the stimulus removed it stays standing. The recording is `docs/media/g1.mp4`.
+A 10 s run, seed 1: the G1 starts walking after the 1.5 s onset, passes 3 gates, travels 6.3 m, and is still upright (pelvis height 0.75 m). With the stimulus removed it stays standing (4 s, displacement 3 mm). The recording is `docs/media/g1.mp4`.
 
 The G1 mesh is the [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) Unitree G1, BSD-3-Clause. See `assets/unitree_g1/LICENSE`.
 

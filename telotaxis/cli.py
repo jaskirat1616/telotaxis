@@ -72,8 +72,9 @@ def cmd_record(args) -> None:
 
 
 def cmd_live(args) -> None:
-    # Tk keeps the picture on screen. MuJoCo's offscreen context was closing
-    # the GLFW window after the first frame.
+    # Tk presents the picture. MuJoCo's macOS viewer needs mjpython and did not
+    # open a window from this session. The frame skips a full soma redraw most
+    # ticks; that redraw was the lag. The pixels are still the MuJoCo render.
     import tkinter as tk
     from PIL import Image, ImageTk
 
@@ -84,7 +85,7 @@ def cmd_live(args) -> None:
     root.configure(bg="black")
     label = tk.Label(root, bg="black", borderwidth=0)
     label.pack()
-    state = {"photo": None, "acc": 0.0, "last": time.perf_counter()}
+    state = {"photo": None, "acc": 0.0, "last": time.perf_counter(), "shown": 0.0}
 
     def on_key(event) -> None:
         key = event.keysym
@@ -120,18 +121,30 @@ def cmd_live(args) -> None:
         if not composer.paused:
             state["acc"] += dt * composer.speed
             stepped = 0
-            while state["acc"] >= 0.015 and stepped < 2:
+            while state["acc"] >= 0.015 and stepped < 4:
                 swarm.step_interval()
                 state["acc"] -= 0.015
                 stepped += 1
-        rgb = composer.frame()
-        image = Image.fromarray(rgb)
-        state["photo"] = ImageTk.PhotoImage(image)
+        rgb = composer.frame_live()
+        state["photo"] = ImageTk.PhotoImage(Image.fromarray(rgb))
         label.configure(image=state["photo"])
+        if swarm.t - state["shown"] >= 1.0:
+            left, right = swarm.pathway.descending()
+            extra = f"  gates {swarm.world.gates_passed}" if args.body == "g1" else ""
+            print(
+                f"  t={swarm.t:5.2f}s  L {left[0]:5.1f} Hz  R {right[0]:5.1f} Hz  "
+                f"speed {swarm.command_speed[0]:.2f}{extra}",
+                flush=True,
+            )
+            state["shown"] = swarm.t
         root.after(1, tick)
 
     root.bind("<Key>", on_key)
-    print("Telotaxis live. Space pauses, V toggles vision, R resets, C pins the brain, arrows orbit, esc quits.", flush=True)
+    print(
+        "Telotaxis live. MuJoCo integrates the contacts. "
+        "Space pauses, V toggles vision, R resets, arrows orbit, esc quits.",
+        flush=True,
+    )
     try:
         root.after(1, tick)
         root.mainloop()

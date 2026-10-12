@@ -89,8 +89,13 @@ class Pathway:
         visual[:, self.driven] = np.asarray(drive, dtype=np.float32)[:, self.driven_column] * INPUT_GAIN
         for _ in range(steps):
             self.current *= self._syn_decay
-            if np.any(self.spiked):
-                self.current += self.spiked @ self.weights
+            # Same sum as spiked @ W. Only the neurons that fired are touched,
+            # which is the whole nonzero pattern of that product.
+            for agent in range(self.n):
+                firing = np.flatnonzero(self.spiked[agent])
+                if firing.size:
+                    pulse = np.asarray(self.weights[firing].sum(axis=0), dtype=np.float32).ravel()
+                    self.current[agent] += pulse
             noise = self._rng.normal(0.0, 0.015, size=(self.n, self.driven.shape[0])).astype(np.float32)
             self.current[:, self.driven] += visual[:, self.driven] + noise
             self.v += (self.current - self.v - self.adapt) * self._step_scale
