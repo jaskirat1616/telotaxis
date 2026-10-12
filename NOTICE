@@ -1,0 +1,25 @@
+Telotaxis code is MIT. See LICENSE.
+
+data/pathway.npz is not MIT. It is a derived work of the MaleCNS v1.0
+connectome, which is released under CC-BY-4.0.
+
+Cite the connectome paper when you use the pathway or a picture of it:
+
+Berg et al., Cell, 2026. The male central nervous system of Drosophila
+melanogaster. doi:10.1016/j.cell.2026.08.015
+https://male-cns.janelia.org/download/
+
+The file keeps traced optic-lobe intrinsic neurons (lamina L1–L5 included),
+visual projection neurons, and descending neurons. Edges are synapse counts
+of at least 3 whose presynaptic transmitter has a signed consensus:
+acetylcholine excitatory; GABA, glutamate, and histamine inhibitory.
+Modulatory and unclear transmitters are dropped, not guessed. Photoreceptors,
+central-brain intrinsic neurons, ventral-cord intrinsic neurons, and sensory
+neurons outside the optic lobe are not in this file.
+
+The closed loop follows the contract published by Fly.exe
+(https://github.com/Ibtisam-Mohammad/Fly.exe): analytic vision, a shared
+pathway with one neural state per vehicle, a 15 ms coupling, and a command
+that is applied one interval later. Telotaxis does not copy that project's
+source. The wheels, the onset timer, and the point-neuron step are
+engineering, not measurements from the paper.

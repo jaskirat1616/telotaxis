@@ -1,0 +1,9 @@
+numpy
+scipy
+mujoco>=3.2
+pillow
+imageio
+imageio-ffmpeg
+glfw
+PyOpenGL
+pyarrow

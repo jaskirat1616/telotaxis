@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+data/raw/
+docs/media/*.mp4
+
+# local symlink to the 1 GB MaleCNS tables
+data/raw
